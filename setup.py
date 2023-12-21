@@ -1,13 +1,17 @@
 import sys, os
 from cx_Freeze import setup, Executable
 
-os.environ["TCL_LIBRARY"] = "./python310"
-os.environ["TK_LIBRARY"] = "./python310"
+# Specify your Python installation directory here
+python_dir = "C:/Users/lawan/AppData/Local/Programs/Python/Python39"
+
+os.environ["TCL_LIBRARY"] = os.path.join(python_dir, "tcl", "tcl8.6")
+os.environ["TK_LIBRARY"] = os.path.join(python_dir, "tcl", "tk8.6")
 
 base = None
 include_files = [
     "./assets",
-    "./python310"
+    os.path.join(python_dir, "DLLs", "tcl86t.dll"),
+    os.path.join(python_dir, "DLLs", "tk86t.dll")
 ]
 
 if sys.platform == "win32":
@@ -20,13 +24,13 @@ setup(
     options={
         "build_exe": {
             "include_files": include_files
-            }
+        }
     },
     executables=[
         Executable(
-            "KrypApp.py",
+            script="KrypApp.py",
             base=base,
-            target_Name="KrypApp.exe",
+            #targetName="KrypApp.py",
             icon="./assets/icon.ico"
         )
     ]

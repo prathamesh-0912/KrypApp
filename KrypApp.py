@@ -1,67 +1,207 @@
+#!/usr/bin/env python3
+"""
+    Name: KrypApp
+    Type: File Encryption GUI App
+"""
 import streamlit as st
 import os
-from cryptography.fernet import Fernet
+from Crypto.Cipher import AES
+import hashlib
+import os
+import sys
+# import threading
 
-# Generate a random key
-def generate_key():
-    return Fernet.generate_key()
 
-# Encrypt data using a key
-def encrypt_data(key, data):
-    cipher_suite = Fernet(key)
-    encrypted_data = cipher_suite.encrypt(data)
-    return encrypted_data
+class EncryptionTool:
+    """ "EncryptionTool" class from "github.com/nsk89" for file encryption.
+    (Has been modified a bit.) """
+    def __init__(self, user_file, user_key, user_salt):
+        # get the path to input file
+        self.user_file = user_file
 
-# Decrypt data using a key
-def decrypt_data(key, encrypted_data):
-    cipher_suite = Fernet(key)
-    decrypted_data = cipher_suite.decrypt(encrypted_data)
-    return decrypted_data
+        self.input_file_size = os.path.getsize(self.user_file)
+        self.chunk_size = 1024
+        self.total_chunks = (self.input_file_size // self.chunk_size) + 1
+        
+        # convert the key and salt to bytes
+        self.user_key = bytes(user_key, "utf-8")
+        self.user_salt = bytes(user_key[::-1], "utf-8")
 
-def main():
-    st.title("KrypApp")
+        # get the file extension
+        self.file_extension = self.user_file.split(".")[-1]
+        
+        # hash type for hashing key and salt
+        self.hash_type = "SHA256"
 
-    # File upload
-    file = st.file_uploader("Choose a file")
-    if file is not None:
-        file_bytes = file.read()
-        filename = os.path.basename(file.name)
+        # encrypted file name
+        self.encrypt_output_file = ".".join(self.user_file.split(".")[:-1]) \
+            + "." + self.file_extension + ".kryp"
 
-    # Secret Key Input (for encryption and decryption)
-    secret_key = st.text_input("Enter Secret Key")
+        # decrypted file name
+        self.decrypt_output_file = self.user_file[:-5].split(".")
+        self.decrypt_output_file = ".".join(self.decrypt_output_file[:-1]) \
+            + "__dekrypted__." + self.decrypt_output_file[-1]
 
-    # Encrypt Button
-    if st.button('Encrypt'):
-        if file_bytes and secret_key:
-            # Generate a key
-            key = generate_key()
+        # dictionary to store hashed key and salt
+        self.hashed_key_salt = dict()
 
-            # Encrypt the file data
-            encrypted_data = encrypt_data(key, file_bytes)
+        # hash key and salt into 16 bit hashes
+        self.hash_key_salt()
 
-            # Save the encrypted file at the imported location
-            encrypted_filename = os.path.join(os.path.dirname(os.path.abspath(file.name)), filename + ".encrypted")
-            with open(encrypted_filename, 'wb') as encrypted_file:
-                encrypted_file.write(encrypted_data)
+    def read_in_chunks(self, file_object, chunk_size=1024):
+        """Lazy function (generator) to read a file piece by piece.
+        Default chunk size: 1k.
+        Code Courtesy: https://stackoverflow.com/questions/519633/lazy-method-for-reading-big-file-in-python
+        """
+        while True:
+            data = file_object.read(chunk_size)
+            if not data:
+                break
+            yield data
 
-            st.write(f"File Encrypted and Saved at {encrypted_filename}")
-        else:
-            st.warning("Please upload a file and enter a key.")
+    def encrypt(self):
+        # create a cipher object
+        cipher_object = AES.new(
+            self.hashed_key_salt["key"],
+            AES.MODE_CFB,
+            self.hashed_key_salt["salt"]
+        )
 
-    # Decrypt Button
-    if st.button('Decrypt'):
-        if file_bytes and secret_key:
-            # Decrypt the file data
-            decrypted_data = decrypt_data(secret_key.encode(), file_bytes)
+        self.abort() # if the output file already exists, remove it first
 
-            # Save the decrypted file at the imported location
-            decrypted_filename = os.path.join(os.path.dirname(os.path.abspath(file.name)), filename.replace(".encrypted", ".decrypted"))
-            with open(decrypted_filename, 'wb') as decrypted_file:
-                decrypted_file.write(decrypted_data)
+        input_file = open(self.user_file, "rb")
+        output_file = open(self.encrypt_output_file, "ab")
+        done_chunks = 0
 
-            st.write(f"File Decrypted and Saved at {decrypted_filename}")
-        else:
-            st.warning("Please upload a file and enter a key.")
+        for piece in self.read_in_chunks(input_file, self.chunk_size):
+            encrypted_content = cipher_object.encrypt(piece)
+            output_file.write(encrypted_content)
+            done_chunks += 1
+            yield (done_chunks / self.total_chunks) * 100
+        
+        input_file.close()
+        output_file.close()
 
-if __name__ == "__main__":
-    main()
+        # Save the hashed key to a file
+        key_file = self.encrypt_output_file + ".key"
+        with open(key_file, "w") as file:
+            file.write(self.hashed_key_salt["key"].decode())
+
+    def decrypt(self):
+        
+        # Read and verify the hashed key
+        key_file = self.user_file + ".key"
+        if not os.path.isfile(key_file):
+            raise Exception("Key file not found. Cannot verify the key.")
+        
+        with open(key_file, "r") as file:
+            saved_key = file.read()
+        if saved_key != self.hashed_key_salt["key"].decode():
+            raise Exception("Incorrect key provided for decryption.")
+        #  exact same as above function except in reverse
+        cipher_object = AES.new(
+            self.hashed_key_salt["key"],
+            AES.MODE_CFB,
+            self.hashed_key_salt["salt"]
+        )
+
+        self.abort() # if the output file already exists, remove it first
+
+        input_file = open(self.user_file, "rb")
+        output_file = open(self.decrypt_output_file, "xb")
+        done_chunks = 0
+
+        for piece in self.read_in_chunks(input_file):
+            decrypted_content = cipher_object.decrypt(piece)
+            output_file.write(decrypted_content)
+            done_chunks += 1
+            yield (done_chunks / self.total_chunks) * 100
+        
+        input_file.close()
+        output_file.close()
+
+        # clean up the cipher object
+        del cipher_object
+
+    def abort(self):
+        if os.path.isfile(self.encrypt_output_file):
+            os.remove(self.encrypt_output_file)
+        if os.path.isfile(self.decrypt_output_file):
+            os.remove(self.decrypt_output_file)
+
+
+    def hash_key_salt(self):
+        # --- convert key to hash
+        #  create a new hash object
+        hasher = hashlib.new(self.hash_type)
+        hasher.update(self.user_key)
+
+        # turn the output key hash into 32 bytes (256 bits)
+        self.hashed_key_salt["key"] = bytes(hasher.hexdigest()[:32], "utf-8")
+
+        # clean up hash object
+        del hasher
+
+        # --- convert salt to hash
+        #  create a new hash object
+        hasher = hashlib.new(self.hash_type)
+        hasher.update(self.user_salt)
+
+        # turn the output salt hash into 16 bytes (128 bits)
+        self.hashed_key_salt["salt"] = bytes(hasher.hexdigest()[:16], "utf-8")
+        
+        # clean up hash object
+        del hasher
+
+st.title('KrypApp - File Encryption App')
+
+# File Upload
+uploaded_file = st.file_uploader("Choose a file to encrypt/decrypt", type=None)
+if uploaded_file is not None:
+    file_bytes = uploaded_file.getvalue()
+    filename = uploaded_file.name
+
+# User Inputs for Key and Operation
+secret_key = st.text_input("Enter your Secret Key", type="password")
+operation = st.radio("Choose Operation", ('Encrypt', 'Decrypt'))
+
+# Encrypt/Decrypt Logic
+def process_file(operation, secret_key, file_bytes, filename):
+    # Convert key and salt
+    user_key = bytes(secret_key, "utf-8")
+    user_salt = bytes(secret_key[::-1], "utf-8")
+
+    # Hash key and salt
+    hasher = hashlib.sha256()
+    hasher.update(user_key)
+    hashed_key = hasher.digest()[:32]
+
+    hasher = hashlib.sha256()
+    hasher.update(user_salt)
+    hashed_salt = hasher.digest()[:16]
+
+    # Create cipher object
+    cipher = AES.new(hashed_key, AES.MODE_CFB, hashed_salt)
+
+    # Encrypt/Decrypt
+    if operation == 'Encrypt':
+        processed_bytes = cipher.encrypt(file_bytes)
+        output_filename = "encrypted_" + filename
+    else:
+        processed_bytes = cipher.decrypt(file_bytes)
+        output_filename = "decrypted_" + filename
+
+    return processed_bytes, output_filename
+
+# Process File
+if st.button(f'{operation} File') and uploaded_file is not None:
+    processed_bytes, output_filename = process_file(operation, secret_key, file_bytes, filename)
+
+    # Download Link
+    st.download_button(
+        label="Download File",
+        data=processed_bytes,
+        file_name=output_filename,
+        mime='application/octet-stream'
+    )
+
